@@ -203,16 +203,15 @@ int set_slot(Device* device) {
   Slot sslot = (slot == "A") ? 0 : 1;
   sp<IBootControl> module = IBootControl::getService();
   if (!module) {
-    device->GetUI()->Print("Error getting bootctrl module.
-");
+    device->GetUI()->Print("Error getting bootctrl module.\n");
   } else {
       auto result = module->setActiveBootSlot(sslot, cb);
     if (result.isOk() && ret.success) {
-      device->GetUI()->Print("Switched slot to %s.
+      if (slot == "A" || slot == "B") device->GetUI()->Print("Switched slot to %s.
 ", slot.c_str());
       device->GoHome();
     } else {
-      device->GetUI()->Print("Error changing bootloader boot slot to %s", slot.c_str());
+      if (slot == "A" || slot == "B") device->GetUI()->Print("Error changing bootloader boot slot to %s", slot.c_str());
     }
   }
   return ret.success ? 0 : 1;

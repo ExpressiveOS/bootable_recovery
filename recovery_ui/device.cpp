@@ -147,6 +147,11 @@ int Device::HandleMenuKey(int key, bool visible) {
     case BTN_DPAD_UP:
       return kHighlightUp;
 
+    case KEY_HOME:
+      return kHighlightFirst;
+    case KEY_END:
+      return kHighlightLast;
+
     case KEY_PAGEUP:
     case KEY_SCROLLUP:
       return kScrollUp;
@@ -162,7 +167,6 @@ int Device::HandleMenuKey(int key, bool visible) {
     case BTN_START:
       return kInvokeItem;
 
-    case KEY_HOME:
     case KEY_HOMEPAGE:
     case KEY_LEFTMETA:
     case KEY_RIGHTMETA:

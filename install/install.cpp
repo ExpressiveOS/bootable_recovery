@@ -64,6 +64,7 @@
 using namespace std::chrono_literals;
 
 bool ask_to_ab_reboot(Device* device);
+bool ask_to_cancel_ota(Device* device);
 
 static constexpr int kRecoveryApiVersion = 3;
 // We define RECOVERY_API_VERSION in Android.mk, which will be picked up by build system and packed
@@ -396,6 +397,13 @@ static InstallResult TryUpdateBinary(Package* package, bool* wipe_cache,
   bool has_metadata = ReadMetadataFromPackage(zip, &metadata);
 
   const bool package_is_ab = has_metadata && get_value(metadata, "ota-type") == OtaTypeToString(OtaType::AB);
+  if (package_is_ab && !IsCancelUpdateSafe(device)) {
+    if (!IsCancelUpdateSafe(device)) {
+      if (!ask_to_cancel_ota(device)) {
+        return INSTALL_ERROR;
+      }
+    }
+  }
   const bool package_is_brick = get_value(metadata, "ota-type") == OtaTypeToString(OtaType::BRICK);
   if (package_is_brick) {
     LOG(INFO) << "Installing a brick package";

@@ -509,7 +509,6 @@ int main(int argc, char** argv) {
   if (!android::base::GetBoolProperty("ro.build.ab_update", false)) {
     device->RemoveMenuItemForAction(Device::SWAP_SLOT);
   }
-  }
 
   ui->SetBackground(RecoveryUI::NONE);
   if (show_text) ui->ShowText(true);

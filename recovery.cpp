@@ -216,7 +216,9 @@ int set_slot(Device* device) {
       } else {
         auto result = amodule->setActiveBootSlot(sslot);
         if (result.isOk()) {
+          ret.success = true;
           device->GetUI()->Print("Switched slot to %s.\n", slot.c_str());
+          device->GoHome();
         } else {
           device->GetUI()->Print("Error changing bootloader boot slot to %s", slot.c_str());
         }
@@ -225,10 +227,9 @@ int set_slot(Device* device) {
       device->GetUI()->Print("Error getting bootctrl module.\n");
     }
   } else {
-      auto result = module->setActiveBootSlot(sslot, cb);
+    auto result = module->setActiveBootSlot(sslot, cb);
     if (result.isOk() && ret.success) {
-      if (slot == "A" || slot == "B") device->GetUI()->Print("Switched slot to %s.
-", slot.c_str());
+      if (slot == "A" || slot == "B") device->GetUI()->Print("Switched slot to %s.\n", slot.c_str());
       device->GoHome();
     } else {
       if (slot == "A" || slot == "B") device->GetUI()->Print("Error changing bootloader boot slot to %s", slot.c_str());

@@ -39,15 +39,11 @@ cc_library_shared {
         "-Wall",
         "-Werror",
     ],
-    include_dirs: [
-        "external/gptfdisk",
-    ],
     shared_libs: [
         "libbase",
         "libcutils",
         "liblog",
         "libselinux",
-        "libsgdisk",
         "libsysutils",
     ],
     static_libs: [

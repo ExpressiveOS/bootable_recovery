@@ -26,17 +26,22 @@
 #include <android-base/logging.h>
 #include <android-base/properties.h>
 #include <android-base/stringprintf.h>
+#include <android-base/unique_fd.h>
 
-#include <sgdisk.h>
-
+#include <cstring>
+#include <endian.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <linux/fs.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/ioctl.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <sys/types.h>
+#include <unistd.h>
 #include <vector>
 
 using android::base::ReadFileToString;
@@ -278,6 +283,122 @@ status_t Disk::readMetadata() {
     VolumeManager::Instance()->notifyEvent(ResponseCode::DiskLabelChanged, mLabel);
     VolumeManager::Instance()->notifyEvent(ResponseCode::DiskSysPathChanged, mSysPath);
     return OK;
+}
+
+enum ptbl_type {
+    MBR,
+    GPT,
+};
+
+struct sgdisk_partition_table {
+    ptbl_type type;
+};
+
+struct sgdisk_partition {
+    int num;
+    std::string type;
+};
+
+static int sgdisk_read(const char* device, sgdisk_partition_table& ptbl,
+                       std::vector<sgdisk_partition>& partitions) {
+    android::base::unique_fd fd(TEMP_FAILURE_RETRY(open(device, O_RDONLY | O_CLOEXEC)));
+    if (fd.get() < 0) {
+        return -errno;
+    }
+
+    int sectorSize = 512;
+    if (ioctl(fd.get(), BLKSSZGET, &sectorSize) < 0 || sectorSize < 512 || sectorSize > 4096) {
+        sectorSize = 512;
+    }
+    uint64_t devBytes = 0;
+    ioctl(fd.get(), BLKGETSIZE64, &devBytes);
+    uint64_t totalSectors = devBytes / static_cast<uint64_t>(sectorSize);
+
+    uint8_t gptHdr[92];
+    if (TEMP_FAILURE_RETRY(pread(fd.get(), gptHdr, sizeof(gptHdr), sectorSize)) ==
+                static_cast<ssize_t>(sizeof(gptHdr)) &&
+        memcmp(gptHdr, "EFI PART", 8) == 0) {
+        uint64_t partLba = 0;
+        uint32_t numParts = 0;
+        uint32_t entrySize = 0;
+        memcpy(&partLba, gptHdr + 72, sizeof(partLba));
+        memcpy(&numParts, gptHdr + 80, sizeof(numParts));
+        memcpy(&entrySize, gptHdr + 84, sizeof(entrySize));
+        partLba = le64toh(partLba);
+        numParts = le32toh(numParts);
+        entrySize = le32toh(entrySize);
+
+        if (entrySize >= 128 && entrySize <= 4096 && numParts <= 1024) {
+            ptbl.type = GPT;
+            for (uint32_t i = 0; i < numParts; ++i) {
+                uint8_t entry[56];
+                off_t off = static_cast<off_t>(partLba * static_cast<uint64_t>(sectorSize) +
+                                               static_cast<uint64_t>(i) * entrySize);
+                if (TEMP_FAILURE_RETRY(pread(fd.get(), entry, sizeof(entry), off)) !=
+                    static_cast<ssize_t>(sizeof(entry))) {
+                    break;
+                }
+                bool allZero = true;
+                for (int b = 0; b < 16; ++b) {
+                    if (entry[b] != 0) {
+                        allZero = false;
+                        break;
+                    }
+                }
+                uint64_t firstLba = 0;
+                memcpy(&firstLba, entry + 32, sizeof(firstLba));
+                firstLba = le64toh(firstLba);
+                if (allZero || firstLba == 0) {
+                    continue;
+                }
+                uint32_t d1 = 0;
+                uint16_t d2 = 0, d3 = 0;
+                memcpy(&d1, entry, 4);
+                memcpy(&d2, entry + 4, 2);
+                memcpy(&d3, entry + 6, 2);
+                d1 = le32toh(d1);
+                d2 = le16toh(d2);
+                d3 = le16toh(d3);
+                partitions.push_back({
+                        static_cast<int>(i + 1),
+                        StringPrintf("%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", d1, d2, d3,
+                                     entry[8], entry[9], entry[10], entry[11], entry[12], entry[13],
+                                     entry[14], entry[15]),
+                });
+            }
+            return 0;
+        }
+    }
+
+    uint8_t mbr[512];
+    if (TEMP_FAILURE_RETRY(pread(fd.get(), mbr, sizeof(mbr), 0)) ==
+                static_cast<ssize_t>(sizeof(mbr)) &&
+        mbr[510] == 0x55 && mbr[511] == 0xaa) {
+        ptbl.type = MBR;
+        for (int i = 0; i < 4; ++i) {
+            const uint8_t* rec = mbr + 446 + i * 16;
+            uint8_t status = rec[0];
+            uint8_t ptype = rec[4];
+            uint32_t startLba = 0, numSectors = 0;
+            memcpy(&startLba, rec + 8, 4);
+            memcpy(&numSectors, rec + 12, 4);
+            startLba = le32toh(startLba);
+            numSectors = le32toh(numSectors);
+            if ((status & 0x7f) != 0 || ptype == 0 || ptype == 0xee || ptype == 0x05 ||
+                ptype == 0x0f || ptype == 0x85 || startLba == 0 || numSectors == 0) {
+                continue;
+            }
+            if (totalSectors > 0 &&
+                static_cast<uint64_t>(startLba) + static_cast<uint64_t>(numSectors) >
+                        totalSectors) {
+                continue;
+            }
+            partitions.push_back({i + 1, StringPrintf("%x", static_cast<unsigned int>(ptype))});
+        }
+        return 0;
+    }
+
+    return -EINVAL;
 }
 
 status_t Disk::readPartitions() {
